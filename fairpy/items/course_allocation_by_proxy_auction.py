@@ -1,17 +1,35 @@
 
-
-
-
 from collections import defaultdict
-import math
+import logging
+import cppyy
 from fairpy.agents import AdditiveAgent
 from fairpy.allocations import Allocation
-import pytest
-import logging
 logging.basicConfig(level = logging.INFO)
 LOGGER = logging.getLogger(__name__)
 
-def create_bid_sets(num_players, bid_set_size):
+cppyy.cppdef("""
+#include <iostream>
+#include <vector>
+
+std::vector<int> get_turns(int num_players, int num_picks) {
+    std::vector<int> turns;
+    for (int i = 0; i < num_picks / num_players; i++) {
+        if (i % 2 == 0) {
+            for (int player = 0; player < num_players; player++) {
+                turns.push_back(player);
+            }
+        } else {
+            for (int player = num_players - 1; player >= 0; player--) {
+                turns.push_back(player);
+            }
+        }
+    }
+    return turns;
+}
+""")
+
+
+def create_bid_sets(num_players, bid_set_size,cppyy_flag=False):
     """
     This function create the bid set for each Agent with this bids he can buy courses
     >>> create_bid_sets(3,2)
@@ -25,8 +43,12 @@ def create_bid_sets(num_players, bid_set_size):
   
     # Sort the bids in decreasing order
     B = sorted(B, reverse=True)
-  
-    turn_list = create_turns(num_players=num_players,num_picks=num_players*bid_set_size)
+    
+    if cppyy_flag:
+        turn_list = cppyy.gbl.get_turns(num_players*bid_set_size, num_players) 
+    else:
+        turn_list = create_turns(num_players=num_players,num_picks=num_players*bid_set_size)
+
     for i in range(len(turn_list)):
         bid_sets[turn_list[i]].append(B[i])
   
@@ -77,7 +99,7 @@ def calculate_b_double_star(Bi,B_tag_i,b_star):
     Bi_without_B_tag_i_ = [bid for bid in Bi if bid not in B_tag_i and bid >= b_star]
     return min(Bi_without_B_tag_i_) if Bi_without_B_tag_i_ else None
            
-def course_allocation(agents: list[AdditiveAgent],course_capacity:int,course_list:str,course_amount_per_agent:int) -> Allocation:
+def course_allocation(agents,course_capacity:int,course_list:str,course_amount_per_agent:int,cppyy_flag=False) -> Allocation:
     """
     Allocates the given courses to the given agents using the 'Course allocation by proxy auction' algorithm which
     garantees efficient Pareto by Uthor Scott Duke Kominers, Mike Ruberry and Jonathan Ullman
@@ -117,7 +139,7 @@ def course_allocation(agents: list[AdditiveAgent],course_capacity:int,course_lis
 
     for i,agent in enumerate(agents):
         list_of_course_preference [i] = sorted([course for course in course_list],key= lambda x: agent.value({x})) 
-    bids_coins =create_bid_sets(len(agents),course_amount_per_agent)
+    bids_coins =create_bid_sets(len(agents),course_amount_per_agent,cppyy_flag)
     LOGGER.info(f"Created the bids for each player: {bids_coins}")
 
     Ac = {}
@@ -164,8 +186,12 @@ def course_allocation(agents: list[AdditiveAgent],course_capacity:int,course_lis
             if [bid for bid in bids_coins[i] if bid in Ac[course]]: bundle[agent.name()].append(course)
     LOGGER.info(f"Algorithm ends successfully")
     return Allocation(agents=[agent.name() for agent in agents], bundles=bundle)
+
+
+
+
+    
 if __name__ == "__main__":
     import doctest
     doctest.testmod()
-
 
